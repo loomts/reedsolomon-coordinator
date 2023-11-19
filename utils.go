@@ -1,42 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"os"
+	"path"
 )
-
-func FindFreePort(host string, maxAttempts int) (int, error) {
-	if host == "" {
-		host = "localhost"
-	}
-
-	for i := 0; i < maxAttempts; i++ {
-		addr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(host, "0"))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "unable to resolve tcp addr: %v", err)
-			continue
-		}
-		l, err := net.ListenTCP("tcp", addr)
-		if err != nil {
-			l.Close()
-			fmt.Fprintf(os.Stderr, "unable to listen on addr %q: %v", addr, err)
-			continue
-		}
-
-		port := l.Addr().(*net.TCPAddr).Port
-		l.Close()
-		return port, nil
-
-	}
-
-	return 0, fmt.Errorf("no free port found")
-}
 
 func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "get net interface address failed, err = ", err.Error())
+		log.Errorf("get net interface address failed, %s", err)
 		return ""
 	}
 	for _, addr := range addrs {
@@ -49,9 +22,16 @@ func GetLocalIP() string {
 	return ""
 }
 
-func handleErr(err error) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s", err.Error())
-		os.Exit(2)
-	}
+func pwd() string {
+	base, _ := os.Getwd()
+	return base
+}
+
+func pwdJoin(file string) string {
+	return path.Join(pwd(), file)
+}
+
+func defaultStore() string {
+	home, _ := os.UserHomeDir()
+	return path.Join(home, ".reedsolomon-coordinator")
 }

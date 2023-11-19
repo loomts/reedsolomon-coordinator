@@ -12,3 +12,8 @@ sockets
 
 add file -> store metadata -> split file -> send block to peers.
 get file -> check metadata -> get block from peers -> combine block.
+
+
+---
+## Question
+Is Multiaddr only can be connected by p2p?

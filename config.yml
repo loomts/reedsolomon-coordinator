@@ -1,5 +1,5 @@
-nodes:
-    - host: ${alip}
-      port: 6789
-    - host: ${wslip}
-    - host: ${hostip}
+#nodes:
+#  - host: ${WSLIP}
+#    port: 6789
+#  - host: ${ALIP}
+#    port: 6789
