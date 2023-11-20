@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Node struct {
@@ -105,6 +107,7 @@ func (rc *RC) Init() {
 			return
 		}
 		log.Infof("RUN \n\n./reedsolomon-coordinator -d %s/p2p/%s\n\n on another console.\n", rc.Host.Addrs()[0], rc.Host.ID())
+		fmt.Printf("RUN \n\n./reedsolomon-coordinator -d %s/p2p/%s\n\n on another console.\n", rc.Host.Addrs()[0], rc.Host.ID())
 		rc.Host.SetStreamHandler(rc.TranProtocol, rc.streamHandler)
 	} else {
 		// connect to the given IPFS ID
@@ -121,9 +124,10 @@ func (rc *RC) Init() {
 		if err != nil {
 			log.Errorf("NewStream fail: %s", err)
 		}
-		rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-		go rc.readShard(rw)
-		go rc.writeShard(rw)
+		s.SetDeadline(time.Now().Add(time.Hour))
+		//rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+		go rc.ReceFiles(s)
+		go rc.SendFiles(s)
 	}
 	select {}
 }
@@ -138,48 +142,62 @@ func mkdir() {
 
 func (rc *RC) streamHandler(s network.Stream) {
 	log.Infof("%s start to handle Stream!", rc.Host.ID())
-	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-	go rc.readShard(rw)
-	go rc.writeShard(rw)
+	go rc.ReceFiles(s)
+	go rc.SendFiles(s)
 }
 
-func (rc *RC) readShard(rw *bufio.ReadWriter) {
+func (rc *RC) ReceFiles(s network.Stream) {
+
+	tr := tar.NewReader(s)
 	for {
-		sName, _ := rw.ReadString('\n')
-		sName = sName[:len(sName)-1]
-		file, err := os.Create(path.Join(defaultStore(), sName))
-		if err != nil {
-			log.Error("cannot create file：%s", err)
-			return
+		hdr, err := tr.Next()
+		log.Infof("receive %s", hdr.Name)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			log.Errorf("tar read fail: %s", err)
 		}
-		fmt.Println()
-		log.Infof("Reading file:%s", sName)
-		written, err := io.CopyBuffer(file, rw, make([]byte, 1024))
+		absFName := path.Join(defaultStore(), hdr.Name)
+		file, err := os.Create(absFName)
+		if err != nil {
+			log.Errorf("create file fail: %s", err)
+		}
+		written, err := io.Copy(file, tr)
 		fileInfo, err := file.Stat()
 		fmt.Println(fileInfo.Size())
-		log.Infof("After read file:%s for %d byte", sName, written)
+		log.Infof("After read file:%s for %d byte", hdr.Name, written)
 		if err != nil {
 			log.Error("transfer fail：%s", err)
 			return
 		}
-		log.Infof(sName + "transfer success")
+		log.Infof(hdr.Name + " received success")
 		err = file.Close()
 		if err != nil {
-			log.Infof(sName + "close fail")
+			log.Infof(hdr.Name + "close fail")
 			return
 		}
 	}
 }
 
-func (rc *RC) writeShard(rw *bufio.ReadWriter) {
+func (rc *RC) SendFiles(s network.Stream) {
+	rc.Peers = append(rc.Peers, Node{
+		Host: "",
+		Port: 0,
+		ID:   rc.Host.Peerstore().Peers()[0],
+	})
 	stdReader := bufio.NewReader(os.Stdin)
+	tw := tar.NewWriter(s)
+	defer tw.Close()
 	for {
 		fmt.Printf("We're in %s, input file to erasure...\n> ", pwd())
 		fName, _ := stdReader.ReadString('\n')
 		fName = fName[:len(fName)-1]
-		longFName := pwdJoin(fName)
-		fmt.Println(longFName)
-		bfile, err := os.ReadFile(longFName)
+		absFName := fName
+		if !path.IsAbs(fName) {
+			absFName = pwdJoin(fName)
+		}
+		log.Infof("erasuring file %s", absFName)
+		bfile, err := os.ReadFile(absFName)
 		if err != nil {
 			log.Errorf("read file fail: %s", err)
 		}
@@ -191,37 +209,31 @@ func (rc *RC) writeShard(rw *bufio.ReadWriter) {
 		if err != nil {
 			log.Errorf("erasure coding fail: %s", err)
 		}
-		fDetail, err := os.Stat(longFName)
+		fInfo, err := os.Stat(absFName)
 		if err != nil {
 			log.Errorf("read file stat fail: %s", err)
 		}
 		rf := RFile{
 			MD5:    hex.EncodeToString(md5.New().Sum(bfile)),
-			name:   fName,
-			Size:   fDetail.Size(),
+			name:   fInfo.Name(),
+			Size:   fInfo.Size(),
 			RSize:  *data + *par,
 			Parity: *par,
 			S2P:    make(map[int]int),
 		}
-		rc.Peers = append(rc.Peers, Node{
-			Host: "",
-			Port: 0,
-			ID:   rc.Host.Peerstore().Peers()[0],
-		})
 		wg := sync.WaitGroup{}
 		wg.Add(len(shards))
 		for i := 0; i < len(shards); i++ {
-			log.Infof("Shard%d Writing to Peer%d", i, i%len(rc.Peers))
 			rf.S2P[i] = i % len(rc.Peers)
 			sName := fName + "." + strconv.Itoa(i)
-			rc.storeShard(&shards[i], i%len(rc.Peers), sName, rw, &wg)
+			rc.sendShard(&shards[i], i%len(rc.Peers), sName, tw, &wg)
 		}
 		wg.Wait()
 		rc.RFile = append(rc.RFile, rf)
 	}
 }
 
-func (rc *RC) storeShard(shard *[]byte, id int, sName string, rw *bufio.ReadWriter, wg *sync.WaitGroup) {
+func (rc *RC) sendShard(shard *[]byte, id int, sName string, tw *tar.Writer, wg *sync.WaitGroup) {
 	defer wg.Done()
 	if id == 0 {
 		// self store
@@ -240,20 +252,20 @@ func (rc *RC) storeShard(shard *[]byte, id int, sName string, rw *bufio.ReadWrit
 		}
 	} else {
 		// peer store
-		_, err := rw.WriteString(sName + "\n") // shard name
+		err := tw.WriteHeader(&tar.Header{
+			Name: sName,
+			Size: int64(len(*shard)),
+		})
 		if err != nil {
-			log.Errorf("%s Write String fail,%s", sName, err)
+			log.Errorf("%s Write tar hander fail,%s", sName, err)
 		}
-		err = rw.Flush()
 		if err != nil {
-			log.Errorf("%s Write String flush fail,%s", sName, err)
+			log.Errorf("file readerr %v", err)
 		}
-		log.Infof("size of shard%s:%d", sName, len(*shard))
-		written, err := io.CopyN(rw, bytes.NewReader(*shard), int64(len(*shard)))
-
-		err = rw.Flush()
+		log.Infof("size of shard %s is %d", sName, len(*shard))
+		written, err := io.Copy(tw, bytes.NewReader(*shard)) // TODO compare to io.CopyBuffer
 		if err != nil {
-			log.Errorf("%s Write String flush fail,%s", sName, err)
+			log.Errorf("tar flush false %s", err)
 		}
 		if err != nil {
 			log.Errorf("%s io copy fail: %s", sName, err)

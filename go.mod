@@ -9,9 +9,6 @@ require (
 	github.com/multiformats/go-multiaddr v0.12.0
 	github.com/spf13/viper v1.17.0
 	go.uber.org/zap v1.26.0
-)
-
-require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
