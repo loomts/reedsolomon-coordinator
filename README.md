@@ -4,9 +4,17 @@ This project use [reedsolomon](https://github.com/klauspost/reedsolomon.git) to 
 
 ## Usage
 
-### config.yml
-
 ## Design
 
-add file -> store metadata -> split file -> send block to peers.
-get file -> check metadata -> get block from peers -> combine block.
+add file -> store metadata -> split file -> erasure encoding -> send shards to peers.
+get file -> check metadata -> get shards from peers -> erasure decoding(if necessary) -> write bytes to file.
+
+## TODO
+
+- [x] optimize project structure
+- [ ] use ipfs to store shards
+- [ ] add reconstruct file option
+- [ ] add mdns and dht
+- [ ] multi stream(concurrence) to send one file
+- [ ] reuse stream pool
+- [ ] optimize Reed-Solomon Codes
